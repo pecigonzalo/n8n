@@ -1,3 +1,4 @@
+import moment from 'moment-timezone';
 import type {
 	IDataObject,
 	IExecuteFunctions,
@@ -9,20 +10,20 @@ import type {
 	INodeTypeDescription,
 	JsonObject,
 } from 'n8n-workflow';
-import { NodeOperationError } from 'n8n-workflow';
+import { NodeConnectionType, NodeOperationError } from 'n8n-workflow';
+
+import { oldVersionNotice } from '@utils/descriptions';
 
 import { channelFields, channelOperations } from './ChannelDescription';
-import { messageFields, messageOperations } from './MessageDescription';
-import { starFields, starOperations } from './StarDescription';
 import { fileFields, fileOperations } from './FileDescription';
-import { reactionFields, reactionOperations } from './ReactionDescription';
-import { userGroupFields, userGroupOperations } from './UserGroupDescription';
-import { userFields, userOperations } from './UserDescription';
-import { userProfileFields, userProfileOperations } from './UserProfileDescription';
 import { slackApiRequest, slackApiRequestAllItems, validateJSON } from './GenericFunctions';
+import { messageFields, messageOperations } from './MessageDescription';
 import type { IAttachment } from './MessageInterface';
-
-import moment from 'moment';
+import { reactionFields, reactionOperations } from './ReactionDescription';
+import { starFields, starOperations } from './StarDescription';
+import { userFields, userOperations } from './UserDescription';
+import { userGroupFields, userGroupOperations } from './UserGroupDescription';
+import { userProfileFields, userProfileOperations } from './UserProfileDescription';
 
 interface Attachment {
 	fields: {
@@ -74,8 +75,8 @@ export class SlackV1 implements INodeType {
 			defaults: {
 				name: 'Slack',
 			},
-			inputs: ['main'],
-			outputs: ['main'],
+			inputs: [NodeConnectionType.Main],
+			outputs: [NodeConnectionType.Main],
 			credentials: [
 				{
 					name: 'slackApi',
@@ -97,6 +98,7 @@ export class SlackV1 implements INodeType {
 				},
 			],
 			properties: [
+				oldVersionNotice,
 				{
 					displayName: 'Authentication',
 					name: 'authentication',
@@ -1377,6 +1379,6 @@ export class SlackV1 implements INodeType {
 				throw error;
 			}
 		}
-		return this.prepareOutputData(returnData);
+		return [returnData];
 	}
 }

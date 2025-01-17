@@ -1,25 +1,57 @@
+import { writeFile } from 'fs/promises';
 import type {
+	ICredentialTestFunctions,
+	ICredentialsDecrypted,
 	IDataObject,
 	IExecuteFunctions,
+	INodeCredentialTestResult,
 	INodeExecutionData,
 	INodeType,
 	INodeTypeDescription,
 } from 'n8n-workflow';
-import { BINARY_ENCODING } from 'n8n-workflow';
-
-import { rm, writeFile } from 'fs/promises';
-
-import { file as tmpFile } from 'tmp-promise';
-
+import { BINARY_ENCODING, NodeConnectionType, NodeOperationError } from 'n8n-workflow';
 import type { Config } from 'node-ssh';
 import { NodeSSH } from 'node-ssh';
 import type { Readable } from 'stream';
+import { file as tmpFile } from 'tmp-promise';
+
+import { formatPrivateKey } from '@utils/utilities';
+
+async function resolveHomeDir(
+	this: IExecuteFunctions,
+	path: string,
+	ssh: NodeSSH,
+	itemIndex: number,
+) {
+	if (path.startsWith('~/')) {
+		let homeDir = (await ssh.execCommand('echo $HOME')).stdout;
+
+		if (homeDir.charAt(homeDir.length - 1) !== '/') {
+			homeDir += '/';
+		}
+
+		return path.replace('~/', homeDir);
+	}
+
+	if (path.startsWith('~')) {
+		throw new NodeOperationError(
+			this.getNode(),
+			'Invalid path. Replace "~" with home directory or "~/"',
+			{
+				itemIndex,
+			},
+		);
+	}
+
+	return path;
+}
 
 export class Ssh implements INodeType {
 	description: INodeTypeDescription = {
 		displayName: 'SSH',
 		name: 'ssh',
 		icon: 'fa:terminal',
+		iconColor: 'black',
 		group: ['input'],
 		version: 1,
 		subtitle: '={{$parameter["operation"] + ": " + $parameter["resource"]}}',
@@ -28,12 +60,13 @@ export class Ssh implements INodeType {
 			name: 'SSH',
 			color: '#000000',
 		},
-		inputs: ['main'],
-		outputs: ['main'],
+		inputs: [NodeConnectionType.Main],
+		outputs: [NodeConnectionType.Main],
 		credentials: [
 			{
 				name: 'sshPassword',
 				required: true,
+				testedBy: 'sshConnectionTest',
 				displayOptions: {
 					show: {
 						authentication: ['password'],
@@ -43,6 +76,7 @@ export class Ssh implements INodeType {
 			{
 				name: 'sshPrivateKey',
 				required: true,
+				testedBy: 'sshConnectionTest',
 				displayOptions: {
 					show: {
 						authentication: ['privateKey'],
@@ -157,7 +191,7 @@ export class Ssh implements INodeType {
 				default: 'upload',
 			},
 			{
-				displayName: 'Binary Property',
+				displayName: 'Input Binary Field',
 				name: 'binaryPropertyName',
 				type: 'string',
 				default: 'data',
@@ -169,8 +203,7 @@ export class Ssh implements INodeType {
 					},
 				},
 				placeholder: '',
-				description:
-					'Name of the binary property which contains the data for the file to be uploaded',
+				hint: 'The name of the input binary field containing the file to be uploaded',
 			},
 			{
 				displayName: 'Target Directory',
@@ -205,7 +238,7 @@ export class Ssh implements INodeType {
 				required: true,
 			},
 			{
-				displayName: 'Binary Property',
+				displayName: 'File Property',
 				displayOptions: {
 					show: {
 						resource: ['file'],
@@ -222,11 +255,11 @@ export class Ssh implements INodeType {
 				displayName: 'Options',
 				name: 'options',
 				type: 'collection',
-				placeholder: 'Add Option',
+				placeholder: 'Add option',
 				displayOptions: {
 					show: {
 						resource: ['file'],
-						operation: ['upload'],
+						operation: ['upload', 'download'],
 					},
 				},
 				default: {},
@@ -243,6 +276,53 @@ export class Ssh implements INodeType {
 		],
 	};
 
+	methods = {
+		credentialTest: {
+			async sshConnectionTest(
+				this: ICredentialTestFunctions,
+				credential: ICredentialsDecrypted,
+			): Promise<INodeCredentialTestResult> {
+				const credentials = credential.data as IDataObject;
+				const ssh = new NodeSSH();
+				try {
+					if (!credentials.privateKey) {
+						await ssh.connect({
+							host: credentials.host as string,
+							username: credentials.username as string,
+							port: credentials.port as number,
+							password: credentials.password as string,
+						});
+					} else {
+						const options: Config = {
+							host: credentials.host as string,
+							username: credentials.username as string,
+							port: credentials.port as number,
+							privateKey: formatPrivateKey(credentials.privateKey as string),
+						};
+
+						if (credentials.passphrase) {
+							options.passphrase = credentials.passphrase as string;
+						}
+
+						await ssh.connect(options);
+					}
+				} catch (error) {
+					const message = `SSH connection failed: ${error.message}`;
+					return {
+						status: 'Error',
+						message,
+					};
+				} finally {
+					ssh.dispose();
+				}
+				return {
+					status: 'OK',
+					message: 'Connection successful!',
+				};
+			},
+		},
+	};
+
 	async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
 		const items = this.getInputData();
 
@@ -251,8 +331,6 @@ export class Ssh implements INodeType {
 		const resource = this.getNodeParameter('resource', 0);
 		const operation = this.getNodeParameter('operation', 0);
 		const authentication = this.getNodeParameter('authentication', 0) as string;
-
-		const temporaryFiles: string[] = [];
 
 		const ssh = new NodeSSH();
 
@@ -268,16 +346,11 @@ export class Ssh implements INodeType {
 				});
 			} else if (authentication === 'privateKey') {
 				const credentials = await this.getCredentials('sshPrivateKey');
-
-				const { path } = await tmpFile({ prefix: 'n8n-ssh-' });
-				temporaryFiles.push(path);
-				await writeFile(path, credentials.privateKey as string);
-
 				const options: Config = {
 					host: credentials.host as string,
 					username: credentials.username as string,
 					port: credentials.port as number,
-					privateKey: path,
+					privateKey: formatPrivateKey(credentials.privateKey as string),
 				};
 
 				if (credentials.passphrase) {
@@ -292,7 +365,12 @@ export class Ssh implements INodeType {
 					if (resource === 'command') {
 						if (operation === 'execute') {
 							const command = this.getNodeParameter('command', i) as string;
-							const cwd = this.getNodeParameter('cwd', i) as string;
+							const cwd = await resolveHomeDir.call(
+								this,
+								this.getNodeParameter('cwd', i) as string,
+								ssh,
+								i,
+							);
 							returnItems.push({
 								json: (await ssh.execCommand(command, { cwd })) as unknown as IDataObject,
 								pairedItem: {
@@ -305,38 +383,51 @@ export class Ssh implements INodeType {
 					if (resource === 'file') {
 						if (operation === 'download') {
 							const dataPropertyNameDownload = this.getNodeParameter('binaryPropertyName', i);
-							const parameterPath = this.getNodeParameter('path', i) as string;
-
-							const { path } = await tmpFile({ prefix: 'n8n-ssh-' });
-							temporaryFiles.push(path);
-
-							await ssh.getFile(path, parameterPath);
-
-							const newItem: INodeExecutionData = {
-								json: items[i].json,
-								binary: {},
-								pairedItem: {
-									item: i,
-								},
-							};
-
-							if (items[i].binary !== undefined && newItem.binary) {
-								// Create a shallow copy of the binary data so that the old
-								// data references which do not get changed still stay behind
-								// but the incoming data does not get changed.
-								Object.assign(newItem.binary, items[i].binary);
-							}
-
-							items[i] = newItem;
-
-							items[i].binary![dataPropertyNameDownload] = await this.nodeHelpers.copyBinaryFile(
-								path,
-								parameterPath,
+							const parameterPath = await resolveHomeDir.call(
+								this,
+								this.getNodeParameter('path', i) as string,
+								ssh,
+								i,
 							);
+
+							const binaryFile = await tmpFile({ prefix: 'n8n-ssh-' });
+							try {
+								await ssh.getFile(binaryFile.path, parameterPath);
+
+								const newItem: INodeExecutionData = {
+									json: items[i].json,
+									binary: {},
+									pairedItem: {
+										item: i,
+									},
+								};
+
+								if (items[i].binary !== undefined && newItem.binary) {
+									// Create a shallow copy of the binary data so that the old
+									// data references which do not get changed still stay behind
+									// but the incoming data does not get changed.
+									Object.assign(newItem.binary, items[i].binary);
+								}
+
+								items[i] = newItem;
+
+								const fileName = this.getNodeParameter('options.fileName', i, '') as string;
+								items[i].binary![dataPropertyNameDownload] = await this.nodeHelpers.copyBinaryFile(
+									binaryFile.path,
+									fileName || parameterPath,
+								);
+							} finally {
+								await binaryFile.cleanup();
+							}
 						}
 
 						if (operation === 'upload') {
-							const parameterPath = this.getNodeParameter('path', i) as string;
+							const parameterPath = await resolveHomeDir.call(
+								this,
+								this.getNodeParameter('path', i) as string,
+								ssh,
+								i,
+							);
 							const fileName = this.getNodeParameter('options.fileName', i, '') as string;
 
 							const binaryPropertyName = this.getNodeParameter('binaryPropertyName', i);
@@ -344,30 +435,33 @@ export class Ssh implements INodeType {
 
 							let uploadData: Buffer | Readable;
 							if (binaryData.id) {
-								uploadData = this.helpers.getBinaryStream(binaryData.id);
+								uploadData = await this.helpers.getBinaryStream(binaryData.id);
 							} else {
 								uploadData = Buffer.from(binaryData.data, BINARY_ENCODING);
 							}
 
-							const { path } = await tmpFile({ prefix: 'n8n-ssh-' });
-							temporaryFiles.push(path);
-							await writeFile(path, uploadData);
+							const binaryFile = await tmpFile({ prefix: 'n8n-ssh-' });
+							try {
+								await writeFile(binaryFile.path, uploadData);
 
-							await ssh.putFile(
-								path,
-								`${parameterPath}${
-									parameterPath.charAt(parameterPath.length - 1) === '/' ? '' : '/'
-								}${fileName || binaryData.fileName}`,
-							);
+								await ssh.putFile(
+									binaryFile.path,
+									`${parameterPath}${
+										parameterPath.charAt(parameterPath.length - 1) === '/' ? '' : '/'
+									}${fileName || binaryData.fileName}`,
+								);
 
-							returnItems.push({
-								json: {
-									success: true,
-								},
-								pairedItem: {
-									item: i,
-								},
-							});
+								returnItems.push({
+									json: {
+										success: true,
+									},
+									pairedItem: {
+										item: i,
+									},
+								});
+							} finally {
+								await binaryFile.cleanup();
+							}
 						}
 					}
 				} catch (error) {
@@ -393,21 +487,15 @@ export class Ssh implements INodeType {
 					throw error;
 				}
 			}
-		} catch (error) {
+		} finally {
 			ssh.dispose();
-			for (const tempFile of temporaryFiles) await rm(tempFile);
-			throw error;
 		}
-
-		for (const tempFile of temporaryFiles) await rm(tempFile);
-
-		ssh.dispose();
 
 		if (resource === 'file' && operation === 'download') {
 			// For file downloads the files get attached to the existing items
-			return this.prepareOutputData(items);
+			return [items];
 		} else {
-			return this.prepareOutputData(returnItems);
+			return [returnItems];
 		}
 	}
 }

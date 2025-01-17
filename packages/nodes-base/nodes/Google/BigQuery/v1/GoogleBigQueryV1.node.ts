@@ -1,8 +1,6 @@
-/* eslint-disable n8n-nodes-base/node-filename-against-convention */
-import type { IExecuteFunctions } from 'n8n-core';
-
 import type {
 	IDataObject,
+	IExecuteFunctions,
 	ILoadOptionsFunctions,
 	INodeExecutionData,
 	INodePropertyOptions,
@@ -11,14 +9,14 @@ import type {
 	INodeTypeDescription,
 	JsonObject,
 } from 'n8n-workflow';
+import { NodeConnectionType, NodeApiError } from 'n8n-workflow';
+import { v4 as uuid } from 'uuid';
 
-import { NodeApiError } from 'n8n-workflow';
+import { oldVersionNotice } from '@utils/descriptions';
 
 import { googleApiRequest, googleApiRequestAllItems, simplify } from './GenericFunctions';
-
 import { recordFields, recordOperations } from './RecordDescription';
-
-import { v4 as uuid } from 'uuid';
+import { generatePairedItemData } from '../../../../utils/utilities';
 
 const versionDescription: INodeTypeDescription = {
 	displayName: 'Google BigQuery',
@@ -31,8 +29,8 @@ const versionDescription: INodeTypeDescription = {
 	defaults: {
 		name: 'Google BigQuery',
 	},
-	inputs: ['main'],
-	outputs: ['main'],
+	inputs: [NodeConnectionType.Main],
+	outputs: [NodeConnectionType.Main],
 	credentials: [
 		{
 			name: 'googleApi',
@@ -54,12 +52,7 @@ const versionDescription: INodeTypeDescription = {
 		},
 	],
 	properties: [
-		{
-			displayName: 'Version 1',
-			name: 'version1',
-			type: 'notice',
-			default: '',
-		},
+		oldVersionNotice,
 		{
 			displayName: 'Authentication',
 			name: 'authentication',
@@ -202,6 +195,8 @@ export class GoogleBigQueryV1 implements INodeType {
 
 				body.rows = rows;
 
+				const itemData = generatePairedItemData(items.length);
+
 				try {
 					responseData = await googleApiRequest.call(
 						this,
@@ -212,14 +207,14 @@ export class GoogleBigQueryV1 implements INodeType {
 
 					const executionData = this.helpers.constructExecutionMetaData(
 						this.helpers.returnJsonArray(responseData as IDataObject[]),
-						{ itemData: { item: 0 } },
+						{ itemData },
 					);
 					returnData.push(...executionData);
 				} catch (error) {
 					if (this.continueOnFail()) {
 						const executionErrorData = this.helpers.constructExecutionMetaData(
 							this.helpers.returnJsonArray({ error: error.message }),
-							{ itemData: { item: 0 } },
+							{ itemData },
 						);
 						returnData.push(...executionErrorData);
 					}
@@ -305,6 +300,6 @@ export class GoogleBigQueryV1 implements INodeType {
 			}
 		}
 
-		return this.prepareOutputData(returnData);
+		return [returnData];
 	}
 }

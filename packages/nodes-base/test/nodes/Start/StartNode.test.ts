@@ -1,9 +1,9 @@
-import * as Helpers from '../Helpers';
-import { WorkflowTestData } from '../types';
 import { executeWorkflow } from '../ExecuteWorkflow';
+import * as Helpers from '../Helpers';
+import type { WorkflowTestData } from '../types';
 
 describe('Execute Start Node', () => {
-	const tests: Array<WorkflowTestData> = [
+	const tests: WorkflowTestData[] = [
 		{
 			description: 'should run start node',
 			input: {

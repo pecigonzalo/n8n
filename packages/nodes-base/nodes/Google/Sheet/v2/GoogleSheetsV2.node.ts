@@ -4,9 +4,10 @@ import type {
 	INodeTypeBaseDescription,
 	INodeTypeDescription,
 } from 'n8n-workflow';
-import { versionDescription } from './actions/versionDescription';
-import { credentialTest, listSearch, loadOptions } from './methods';
+
 import { router } from './actions/router';
+import { versionDescription } from './actions/versionDescription';
+import { credentialTest, listSearch, loadOptions, resourceMapping } from './methods';
 
 export class GoogleSheetsV2 implements INodeType {
 	description: INodeTypeDescription;
@@ -22,9 +23,10 @@ export class GoogleSheetsV2 implements INodeType {
 		loadOptions,
 		credentialTest,
 		listSearch,
+		resourceMapping,
 	};
 
 	async execute(this: IExecuteFunctions) {
-		return router.call(this);
+		return await router.call(this);
 	}
 }

@@ -1,12 +1,14 @@
 import type { ILoadOptionsFunctions, INodePropertyOptions } from 'n8n-workflow';
-import type { ConnectionsData } from '../helpers/interfaces';
+
+import { configurePostgres } from '../../transport';
+import type { PostgresNodeCredentials } from '../helpers/interfaces';
 import { getTableSchema } from '../helpers/utils';
-import { Connections } from '../transport';
 
 export async function getColumns(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
-	const credentials = await this.getCredentials('postgres');
+	const credentials = await this.getCredentials<PostgresNodeCredentials>('postgres');
+	const options = { nodeVersion: this.getNode().typeVersion };
 
-	const { db } = (await Connections.getInstance(credentials)) as ConnectionsData;
+	const { db } = await configurePostgres.call(this, credentials, options);
 
 	const schema = this.getNodeParameter('schema', 0, {
 		extractValue: true,
@@ -16,17 +18,13 @@ export async function getColumns(this: ILoadOptionsFunctions): Promise<INodeProp
 		extractValue: true,
 	}) as string;
 
-	try {
-		const columns = await getTableSchema(db, schema, table);
+	const columns = await getTableSchema(db, schema, table);
 
-		return columns.map((column) => ({
-			name: column.column_name,
-			value: column.column_name,
-			description: `Type: ${column.data_type.toUpperCase()}, Nullable: ${column.is_nullable}`,
-		}));
-	} catch (error) {
-		throw error;
-	}
+	return columns.map((column) => ({
+		name: column.column_name,
+		value: column.column_name,
+		description: `Type: ${column.data_type.toUpperCase()}, Nullable: ${column.is_nullable}`,
+	}));
 }
 
 export async function getColumnsMultiOptions(

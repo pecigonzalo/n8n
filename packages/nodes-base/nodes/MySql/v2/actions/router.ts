@@ -1,16 +1,11 @@
-import type { INodeExecutionData } from 'n8n-workflow';
+import type { IExecuteFunctions, INodeExecutionData } from 'n8n-workflow';
 import { NodeOperationError } from 'n8n-workflow';
-import type { IExecuteFunctions } from 'n8n-core';
-
-import { Client } from 'ssh2';
-
-import type { MySqlType } from './node.type';
-import type { QueryRunner } from '../helpers/interfaces';
 
 import * as database from './database/Database.resource';
-
-import { createPool } from '../transport';
+import type { MySqlType } from './node.type';
+import type { MysqlNodeCredentials, QueryRunner } from '../helpers/interfaces';
 import { configureQueryRunner } from '../helpers/utils';
+import { createPool } from '../transport';
 
 export async function router(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
 	let returnData: INodeExecutionData[] = [];
@@ -19,14 +14,11 @@ export async function router(this: IExecuteFunctions): Promise<INodeExecutionDat
 	const operation = this.getNodeParameter('operation', 0);
 	const nodeOptions = this.getNodeParameter('options', 0);
 
-	const credentials = await this.getCredentials('mySql');
+	nodeOptions.nodeVersion = this.getNode().typeVersion;
 
-	let sshClient: Client | undefined = undefined;
+	const credentials = await this.getCredentials<MysqlNodeCredentials>('mySql');
 
-	if (credentials.sshTunnel) {
-		sshClient = new Client();
-	}
-	const pool = await createPool(credentials, nodeOptions, sshClient);
+	const pool = await createPool.call(this, credentials, nodeOptions);
 
 	const runQueries: QueryRunner = configureQueryRunner.call(this, nodeOptions, pool);
 
@@ -53,14 +45,9 @@ export async function router(this: IExecuteFunctions): Promise<INodeExecutionDat
 					`The operation "${operation}" is not supported!`,
 				);
 		}
-	} catch (error) {
-		throw error;
 	} finally {
-		if (sshClient) {
-			sshClient.end();
-		}
 		await pool.end();
 	}
 
-	return this.prepareOutputData(returnData);
+	return [returnData];
 }
